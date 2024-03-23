@@ -1,9 +1,9 @@
 import socket, threading, ssl, pickle
 
 try:
-    file=open('messages.bin', 'rb').close()
+    open('messages.bin', 'rb').close()
 except:
-    file=open('messages.bin', 'wb').close()
+    open('messages.bin', 'wb').close()
 
 HOST = '10.0.0.4'
 PORT = 5555
@@ -22,22 +22,40 @@ except:
 def handle_client(client_socket, address):
     while True:
         try:
-            data = client_socket.recv(1024)
+            data = client_socket.recv(20480)
             data = pickle.loads(data)
-            if data['message']!='':
-                loaded_messages[data['room']]=data['message']
-                for c in clients[data['room']]['clients']:
-                    if c != client_socket:
-                        c.send(pickle.dumps([data['message']]))
-            else:
-                clients[data['room']]['clients'].remove(client_socket)
-                if clients[data['room']]==[]:
-                    clients.pop(data['room'])
-                client_socket.close()
+            if 'message' in data:
+                if data['message']!='':
+                    loaded_messages[data['room']]['message']=data['message']
+                    loaded_messages[data['room']]['logs'].append(data['logs'])
+                    clients[data['room']]['message']=data['message']
+                    clients[data['room']]['logs'].append(data['logs'])
+                    for c in clients[data['room']]['clients']:
+                        if c != client_socket:
+                            c.send(pickle.dumps(data))
+                else:
+                    for i in clients[data['room']]['clients']:
+                        if i != conn_ssl:
+                            i.send(pickle.dumps({'logs':data['logs'], 'message':loaded_messages[data['room']]['message']}))
+                    loaded_messages[data['room']]['logs'].append(data['logs'])
+                    clients[data['room']]['clients'].remove(client_socket)
+                    clients[data['room']]['users'].remove(data['username'])
+                    if clients[data['room']]['clients']==[]:
+                        clients.pop(data['room'])
+                    client_socket.close()
+                    return
+            elif 'logs' in data:
+                conn_ssl.send(pickle.dumps({'logs':loaded_messages[data['room']]['logs']}))
+            elif 'users' in data:
+                conn_ssl.send(pickle.dumps({'users':clients[data['room']]['users']}))
         except Exception as e:
             print(f"Error: {e}")
             try:
+                for i in clients[data['room']]['clients']:
+                    if i != conn_ssl:
+                        i.send(pickle.dumps({'logs':data['logs'], 'message':loaded_messages[data['room']]['message']}))
                 clients[data['room']]['clients'].remove(client_socket)
+                clients[data['room']]['users'].remove(data['username'])
                 if clients[data['room']]==[]:
                     clients.pop(data['room'])
                 client_socket.close()
@@ -60,12 +78,29 @@ while True:
         pickle.dump(loaded_messages, file)
         file.close()
     conn_ssl = ssl_context.wrap_socket(client_socket, server_side=True)
-    data = conn_ssl.recv(1024)
+    data = conn_ssl.recv(20480)
     data = pickle.loads(data)
+    if data['room'] in clients and data['username'] in clients[data['room']]['users']:
+        conn_ssl.send(pickle.dumps({'error':'username exists'}))
+        data=conn_ssl.recv(20480)
+        conn_ssl.close()
+        continue
     if data['room'] in clients:
         clients[data['room']]['clients'].append(conn_ssl)
+        clients[data['room']]['users'].append(data['username'])
+        clients[data['room']]['logs'].append(data['logs'])
     else:
-        clients[data['room']] = {'clients':[conn_ssl], 'message':loaded_messages[data['room']] if data['room'] in loaded_messages else None}
-    conn_ssl.send(pickle.dumps([loaded_messages[data['room']]]) if data['room'] in loaded_messages else pickle.dumps([None]))
+        if data['room'] in loaded_messages:
+            loaded_messages[data['room']]['logs'].append(data['logs'])
+            clients[data['room']] = {'clients':[conn_ssl], 'message':loaded_messages[data['room']]['message'], 'logs':loaded_messages[data['room']]['logs'], 'users':[data['username']]}
+            conn_ssl.send(pickle.dumps({'message':loaded_messages[data['room']]['message'], 'logs':data['logs']}))
+        else:
+            clients[data['room']] = {'clients':[conn_ssl], 'message':None, 'logs':[data['logs']], 'users':[data['username']]}
+            loaded_messages[data['room']]={'message':None, 'logs':[data['logs']]}
+            conn_ssl.send(pickle.dumps({'message':None}))
+    for i in clients[data['room']]['clients']:
+        if i != conn_ssl:
+            i.send(pickle.dumps({'logs':data['logs'], 'message':loaded_messages[data['room']]['message']}))
+    del data
     client_thread = threading.Thread(target=handle_client, args=(conn_ssl, address), daemon=True)
     client_thread.start()

@@ -9,18 +9,23 @@ HOST = '20.193.141.135'
 PORT = 5555
 class Connection(qtc.QThread):
 
+    getlogs=qtc.pyqtSignal()
+    sendlogs=qtc.pyqtSignal(list)
     finished=qtc.pyqtSignal()
-    progress=qtc.pyqtSignal(list)
+    progress=qtc.pyqtSignal(dict)
     errorsignal=qtc.pyqtSignal(str)
     closewin=qtc.pyqtSignal()
     sendmessage=qtc.pyqtSignal(str)
     connected=qtc.pyqtSignal()
+    handleuser=qtc.pyqtSignal()
 
-    def __init__(self, room):
+    def __init__(self, room, username):
         super().__init__()
         self.loop=True
         self.room=room
+        self.username=username
         self.finished.connect(self.terminate)
+        self.getlogs.connect(self.fetch_logs)
 
     def run(self):
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -41,41 +46,64 @@ class Connection(qtc.QThread):
         self.closewin.emit()
         self.connected.emit()
         self.sendmessage.connect(self.send_message)
-        self.client_socket.send(pickle.dumps({'room': self.room}))
+        self.client_socket.send(pickle.dumps({'room': self.room, 'username':self.username, 'logs':['joined', self.username, qtc.QTime.currentTime().toString(), qtc.QDate.currentDate().toString()]}))
         self.receive_messages(self.client_socket)
 
     def receive_messages(self, client_socket):
         while self.loop:
             try:
-                data = client_socket.recv(1024)
+                data = client_socket.recv(20480)
                 data = pickle.loads(data)
-                self.progress.emit(data)
-            except Exception:
+                if 'error' in data:
+                    self.handleuser.emit()
+                elif 'message' in data:
+                    self.progress.emit(data)
+                else:
+                    if 'users' in data:
+                        self.sendusers.emit(data['users'], self.username)
+                    else:
+                        self.sendlogs.emit(data['logs'])
+            except Exception as e:
+                print(e)
                 self.errorsignal.emit('Could not connect to the server')
                 return
 
     def send_message(self, message):
         emb={
             'room': self.room,
-            'message': message if message else None
+            'message': message if message else None,
+            'logs': ['edited', self.username, qtc.QTime.currentTime().toString(), qtc.QDate.currentDate().toString()]
         }
         self.client_socket.send(pickle.dumps(emb))
+
+    def fetch_logs(self):
+        self.client_socket.send(pickle.dumps({'room': self.room, 'logs':''}))
 
     def terminate(self):
         self.loop=False
         try:
-            self.client_socket.send(pickle.dumps({'room': self.room, 'message': ''}))
+            self.client_socket.send(pickle.dumps({'room': self.room, 'message': '', 'username':self.username, 'logs':['left', self.username, qtc.QTime.currentTime().toString(), qtc.QDate.currentDate().toString()]}))
         except:
             pass
         return super().terminate()
 
 class PlainTextEdit(qtw.QPlainTextEdit):
+
+    updatestatus = qtc.pyqtSignal(str)
+
     def setConnection(self, connection):
         self.connection = connection
+        self.prev=''
 
-    def keyReleaseEvent(self, e: qtg.QKeyEvent):
-        self.connection.sendmessage.emit(self.toPlainText())
+    def keyReleaseEvent(self, e):
+        if self.prev!=self.toPlainText():
+            self.communicate()
         return super().keyReleaseEvent(e)
+
+    def communicate(self):
+            self.connection.sendmessage.emit(self.toPlainText())
+            self.updatestatus.emit('edited')
+            self.prev=self.toPlainText()
 
 class MainWindow(qtw.QMainWindow):
 
@@ -113,28 +141,43 @@ class Window(qtw.QWidget):
         self.text1 = qtw.QLabel('Welcome to Text Editor\nEnter a code or create a new one to get started')
         self.text1.setFont(qtg.QFont('Arial', 25))
         self.text1.setAlignment(qtc.Qt.AlignCenter)
-        self.layout().addWidget(self.text1, 5, 0, 2, 0, qtc.Qt.AlignCenter)
+        self.layout().addWidget(self.text1, 9, 0, 2, 0, qtc.Qt.AlignCenter)
 
         self.text2 = qtw.QLabel('Enter the code:')
         self.text2.setFont(qtg.QFont('Arial', 27))
-        self.layout().addWidget(self.text2, 8, 0, 4, 0, qtc.Qt.AlignCenter)
+        self.layout().addWidget(self.text2, 12, 0, 4, 0, qtc.Qt.AlignCenter)
 
         self.code = qtw.QLineEdit()
-        self.layout().addWidget(self.code, 11, 0, 5, 0, qtc.Qt.AlignHCenter)
+        self.layout().addWidget(self.code, 16, 0, 5, 0, qtc.Qt.AlignHCenter)
         self.code.setFont(qtg.QFont('Arial', 27))
         self.code.setFocus()
         self.code.setFixedWidth(800)
         self.code.setAlignment(qtc.Qt.AlignCenter)
 
+        self.text3 = qtw.QLabel('Enter your name:')
+        self.text3.setFont(qtg.QFont('Arial', 27))
+        self.layout().addWidget(self.text3, 22, 0, 4, 0, qtc.Qt.AlignCenter)
+
+        self.name = qtw.QLineEdit()
+        self.layout().addWidget(self.name, 26, 0, 5, 0, qtc.Qt.AlignHCenter)
+        self.name.setFont(qtg.QFont('Arial', 27))
+        self.name.setFixedWidth(800)
+        self.name.setAlignment(qtc.Qt.AlignCenter)
+        self.code.returnPressed.connect(self.name.setFocus)
+        self.name.returnPressed.connect(self.connectionwin)
+
         self.but1 = qtw.QPushButton('Create or Connect to the room')
         self.but1.setFont(qtg.QFont('Arial', 25))
         self.but1.setCursor(qtc.Qt.PointingHandCursor)
         self.but1.clicked.connect(self.connectionwin)
-        self.layout().addWidget(self.but1, 13, 0, 13, 0, qtc.Qt.AlignHCenter)
+        self.layout().addWidget(self.but1, 32, 0, 13, 0, qtc.Qt.AlignHCenter)
 
     def connectionwin(self):
-        if (self.code.text()=='' or self.code.text().isspace() or len(self.code.text())<4 or len(self.code.text())>10 or not self.code.text().isalnum()):
+        if (self.code.text()=='' or len(self.code.text())<4 or len(self.code.text())>10 or not self.code.text().isalnum()):
             self.showerror('Invalid Code', 'Please enter a valid code')
+            return
+        if (self.name.text()=='' or len(self.name.text())<4 or len(self.name.text())>10 or not self.name.text().isalnum()):
+            self.showerror('Invalid Username', 'Please enter a valid username')
             return
 
         self.win = qtw.QWidget()
@@ -149,7 +192,8 @@ class Window(qtw.QWidget):
         self.label1.setFont(qtg.QFont('Arial', 25))
         self.win.layout().addWidget(self.label1, 0, 0, 0, 0, qtc.Qt.AlignCenter)
         self.win.show()
-        
+        self.room=self.code.text()
+        self.username=self.name.text()
         self.create_connection()
 
     def create_connection(self):
@@ -160,6 +204,15 @@ class Window(qtw.QWidget):
             except:
                 pass
             self.showerror('Connection Error', err)
+        def userhandler():
+            try:
+                self.textwin.close()
+            except:
+                pass
+            self.showerror('User Exists', 'The username provided is already in use.\nPlease use a different username.')
+            self.connection.finished.emit()
+            del self.connection
+            return
         try:
             self.textwin
             self.showerror('Error', 'A connection already exists')
@@ -167,11 +220,12 @@ class Window(qtw.QWidget):
             return
         except:
             pass
-        self.room=self.code.text()
-        self.connection = Connection(self.room)
-        self.connection.closewin.connect(lambda:(self.win.close()))
+        self.connection = Connection(self.room, self.username)
+        self.connection.closewin.connect(self.win.close)
         self.connection.errorsignal.connect(handler)
         self.connection.connected.connect(self.textwindow)
+        self.connection.sendlogs.connect(self.showhistory)
+        self.connection.handleuser.connect(userhandler)
         self.connection.start()
         self.win.close()
 
@@ -186,7 +240,8 @@ class Window(qtw.QWidget):
         self.textwin.delvar.connect(self.delwin)
         self.textwin.editor = PlainTextEdit()
         self.textwin.editor.setConnection(self.connection)
-        self.connection.progress.connect(lambda data:self.textwin.editor.setPlainText(data[0]) if data[0] else self.textwin.editor.clear())
+        self.textwin.editor.updatestatus.connect(self.updatestatus)
+        self.connection.progress.connect(self.updatewin)
         self.textwin.fixedfont = qtg.QFontDatabase.systemFont(qtg.QFontDatabase.FixedFont)
         self.textwin.fixedfont.setPointSize(20)
         self.textwin.editor.setFont(self.textwin.fixedfont)
@@ -198,6 +253,9 @@ class Window(qtw.QWidget):
 
         self.textwin.status = qtw.QStatusBar()
         self.textwin.setStatusBar(self.textwin.status)
+        self.textwin.statusText = qtw.QLabel()
+        self.textwin.statusText.setFont(qtg.QFont('Arial', 18))
+        self.textwin.status.addWidget(self.textwin.statusText)
 
         self.textwin.file_toolbar = qtw.QToolBar("File")
         self.textwin.addToolBar(self.textwin.file_toolbar)
@@ -253,8 +311,57 @@ class Window(qtw.QWidget):
         self.textwin.select_action.setStatusTip("Select all text")
         self.textwin.select_action.triggered.connect(self.textwin.editor.selectAll)
         self.textwin.edit_toolbar.addAction(self.textwin.select_action)
+
+        self.textwin.hist_action = qtw.QAction("See History", self)
+        self.textwin.hist_action.setStatusTip("See all history")
+        self.textwin.hist_action.triggered.connect(self.connection.getlogs.emit)
+        self.textwin.edit_toolbar.addAction(self.textwin.hist_action)
+        self.textwin.editor.updatestatus.emit('joined')
         
         self.textwin.show()
+
+    def showhistory(self, data):
+        self.histwin = qtw.QWidget()
+        self.histwin.setWindowTitle('History')
+        self.histwin.setGeometry(100, 100, 800, 400)
+        self.histwin.setMaximumHeight(400)
+        self.histwin.setMaximumWidth(800)
+        self.histwin.setWindowFlags(self.histwin.windowFlags() | qtc.Qt.CustomizeWindowHint)
+        self.histwin.setWindowFlags(self.histwin.windowFlags() & ~qtc.Qt.WindowMaximizeButtonHint)
+        self.histwin.setLayout(qtw.QVBoxLayout())
+        self.histwin.text = qtw.QTextEdit()
+        self.histwin.text.setFont(qtg.QFont('Arial', 20))
+        self.histwin.text.setReadOnly(True)
+        self.histwin.layout().addWidget(self.histwin.text)
+        self.histwin.show()
+        self.histwin.text.clear()
+        for i in data:
+            if i[0]=='joined':
+                self.histwin.text.append(i[3]+' '+i[2]+': '+i[1]+' joined the room')
+            elif i[0]=='left':
+                self.histwin.text.append(i[3]+' '+i[2]+': '+i[1]+' left the room')
+            else:
+                self.histwin.text.append(i[3]+' '+i[2]+': '+i[1]+' edited the text')
+
+    def updatewin(self, data):
+        if 'message' in data:
+            if data['message']:
+                self.textwin.editor.setPlainText(data['message'])
+            else:
+                self.textwin.editor.clear()
+        if 'logs' in data:
+            if "edited" in data['logs']:
+                self.textwin.statusText.setText("Edited by "+data['logs'][1]+" at "+data['logs'][2]+" "+data['logs'][3])
+            elif "joined" in data['logs']:
+                self.textwin.statusText.setText(data['logs'][1]+" joined the room")
+            else:
+                self.textwin.statusText.setText(data['logs'][1]+" left the room")
+
+    def updatestatus(self, status):
+        if status=='edited':
+            self.textwin.statusText.setText("Edited by "+self.username+" at "+qtc.QTime.currentTime().toString()+" "+qtc.QDate.currentDate().toString())
+        elif status=='joined':
+            self.textwin.statusText.setText(self.username+" joined the room")
 
     def file_open(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open file", "", 
@@ -268,19 +375,19 @@ class Window(qtw.QWidget):
             else:
                 self.textwin.path = path
                 self.textwin.editor.setPlainText(text)
-                self.connection.sendmessage.emit(text)
+                self.textwin.editor.communicate()
 
     def redo_new(self):
         self.textwin.editor.redo()
-        self.connection.sendmessage.emit(self.textwin.editor.toPlainText())
+        self.textwin.editor.communicate()
 
     def paste_new(self):
         self.textwin.editor.paste()
-        self.connection.sendmessage.emit(self.textwin.editor.toPlainText())
+        self.textwin.editor.communicate()
 
     def undo_new(self):
         self.textwin.editor.undo()
-        self.connection.sendmessage.emit(self.textwin.editor.toPlainText())
+        self.textwin.editor.communicate()
 
     def file_save(self):
         if self.textwin.path is None:
