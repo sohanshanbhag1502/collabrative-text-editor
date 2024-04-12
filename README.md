@@ -5,7 +5,7 @@ A Collabrative text editing app built in python using Socket Programming and PyQ
 ## Module Requirements:
 - [dotenv](https://pypi.org/project/python-dotenv/)
   ```
-   pip install python-dotenv
+  pip install python-dotenv
   ```
 - [PyQt5](https://pypi.org/project/PyQt5/)
    ```
