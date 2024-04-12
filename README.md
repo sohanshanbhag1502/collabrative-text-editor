@@ -4,9 +4,13 @@ A Collabrative text editing app built in python using Socket Programming and PyQ
 
 ## Module Requirements:
 - [dotenv](https://pypi.org/project/python-dotenv/)
-> pip install python-dotenv
+  ```
+   pip install python-dotenv
+  ```
 - [PyQt5](https://pypi.org/project/PyQt5/)
-> pip install PyQt5
+   ```
+   pip install PyQt5
+   ```
 
 ## Instructions to execute the code:
 - Create a .env file containing the following keys:
@@ -16,7 +20,11 @@ A Collabrative text editing app built in python using Socket Programming and PyQ
     * KEY_FILE: The path to the SSL Key file.
 
 - Run the server using following command
-> python server.py
+  ```
+  python server.py
+  ```
 
 - Run the client using following command
-> python client.pyw
+  ```
+  python client.pyw
+  ```
